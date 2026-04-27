@@ -100,9 +100,9 @@ def create_house_remix(uploaded_file):
 # --- STREAMLIT UI ---
 st.set_page_config(page_title="AI House Remixer", page_icon="🎧")
 st.title("🎧 AI House Remix Engine")
-st.markdown("Double Major MIS/Risk Management Project - *Automated Audio Engineering*")
+st.markdown("*Automated Audio Engineering*")
 
-uploaded_file = st.file_uploader("Upload an MP3 (e.g., Bad Girls)", type=["mp3"])
+uploaded_file = st.file_uploader("Upload an MP3", type=["mp3"])
 
 if uploaded_file:
     st.audio(uploaded_file, format="audio/mp3")
