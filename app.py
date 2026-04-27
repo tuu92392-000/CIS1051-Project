@@ -88,7 +88,7 @@ def create_experimental_remix(uploaded_file, genre):
 # --- UI ---
 st.set_page_config(page_title="AI Glitch Remixer", page_icon="🧪")
 st.title("🧪 AI Glitch Remix Engine")
-st.caption("Double Major MIS & Corporate Risk: Granular Synthesis Logic")
+st.caption("Granular Synthesis Logic")
 
 style = st.selectbox("Style:", ["House", "Techno", "Dubstep"])
 file = st.file_uploader("Upload Track", type=["mp3"])
