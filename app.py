@@ -5,94 +5,89 @@ from pydub.effects import compress_dynamic_range
 import io
 import random
 
-# --- MODULAR CLUB UTILITIES ---
+# --- CORE CLUB UTILITIES ---
 
-def scan_for_phrase(vocal_track, min_duration=1500, max_duration=4000):
-    """
-    Scans the song for a high-energy vocal phrase of a specific length.
-    Ensures the 'Chorus' is a complete string of words.
-    """
-    attempts = 0
-    while attempts < 20:
-        start = random.randint(0, len(vocal_track) - max_duration)
-        sample = vocal_track[start : start + max_duration]
-        # Logic: If it's loud enough and the right length, it's a 'memorable' phrase
-        if sample.rms > vocal_track.rms * 1.2:
-            return sample.fade_in(100).fade_out(100)
-        attempts += 1
-    return vocal_track[:max_duration] # Fallback
+def create_rhythmic_chop(segment, duration_ms, repeats):
+    """Creates the 'stutter' effect that defines electronic music."""
+    if len(segment) < duration_ms:
+        return segment
+    chop = segment[:duration_ms].fade_in(5).fade_out(5)
+    return chop * repeats
+
+def get_vocal_phrase(vocal_track, bar_ms):
+    """Finds a energetic 1-bar phrase for the 'Chorus'."""
+    # We scan for a high-energy start point
+    start = random.randint(0, len(vocal_track) - bar_ms)
+    return vocal_track[start : start + bar_ms].fade_in(100).fade_out(100)
 
 # --- THE ENGINE ---
 
-def create_modular_remix(uploaded_file, genre):
-    with st.status(f"🎹 Engineering {genre} Modular Mix...", expanded=True) as status:
+def create_club_remix(uploaded_file, genre):
+    with st.status(f"🎹 Re-Engineering {genre} Remix...", expanded=True) as status:
         file_bytes = uploaded_file.read()
         audio = AudioSegment.from_file(io.BytesIO(file_bytes), format="mp3")
         
-        # 1. STEM ISOLATION
-        status.update(label="🔬 Extracting Frequency Layers...")
+        # 1. GENRE PARAMETERS
+        if genre == "House":
+            bpm, bars, halftime = 126, 64, False
+        elif genre == "Techno":
+            bpm, bars, halftime = 142, 80, False
+        else: # Dubstep
+            bpm, bars, halftime = 140, 72, True
+            
+        beat_ms = int(60000 / bpm)
+        bar_ms = beat_ms * 4
+        
+        # 2. FREQUENCY ISOLATION
+        status.update(label="🔬 Isolating Harmonic Stems...")
         bass = audio.low_pass_filter(150)
-        mids = audio.high_pass_filter(350).low_pass_filter(3000)
+        mids = audio.high_pass_filter(300).low_pass_filter(3500)
         highs = audio.high_pass_filter(5000)
-
-        # 2. SEED SELECTION (The "Modular" Part)
-        # Instead of randomizing every bar, we pick our 'Hero' samples NOW
-        status.update(label="🎯 Selecting Hero Samples...")
-        
-        # Pick 2 different 1/2 beat 'Melody Chops'
-        beat_ms = int(60000 / (124 if genre == "House" else 140))
-        melody_seeds = []
-        for _ in range(2):
-            m_start = random.randint(0, len(mids) - beat_ms)
-            melody_seeds.append(mids[m_start : m_start + (beat_ms // 2)])
-        
-        # Pick 1 'Percussion Sparkle' from the highs
-        p_start = random.randint(0, len(highs) - (beat_ms // 4))
-        perc_seed = highs[p_start : p_start + (beat_ms // 4)]
-
-        # Pick 2 Full-Phrase Vocal Hooks (The Chorus)
-        chorus_hooks = [scan_for_phrase(audio) for _ in range(2)]
 
         remix = AudioSegment.empty()
         
-        # 3. ARRANGEMENT
-        for bar in range(80):
-            bar_ms = beat_ms * 4
+        for bar in range(bars):
             bar_content = AudioSegment.silent(duration=bar_ms)
             
-            # --- LAYER A: THE BEAT (Repetitive Kick) ---
-            kick = bass[:150].compress_dynamic_range() + 15
-            for b in range(4):
-                bar_content = bar_content.overlay(kick, position=b * beat_ms)
+            # --- LAYER A: THE BEAT (Saturated Kick) ---
+            kick = bass[:160].compress_dynamic_range() + 15
+            if halftime: # Dubstep
+                bar_content = bar_content.overlay(kick, position=0)
+                snare = highs[500:750] + 10
+                bar_content = bar_content.overlay(snare, position=beat_ms * 2)
+            else: # House/Techno
+                for b in range(4):
+                    bar_content = bar_content.overlay(kick, position=b * beat_ms)
 
-            # --- LAYER B: THE REPETITIVE MELODY ---
-            # We alternate between our two hero melody seeds for 'Call and Response'
-            seed = melody_seeds[0] if (bar // 4) % 2 == 0 else melody_seeds[1]
+            # --- LAYER B: RHYTHMIC INSTRUMENTAL (The Melody) ---
+            # Take a 1/2 beat chop and repeat it across the bar
+            i_start = random.randint(0, len(mids) - beat_ms)
+            chop_rate = 8 if genre != "Dubstep" else 4
+            melody_chop = create_rhythmic_chop(mids[i_start:], beat_ms // (chop_rate // 4), chop_rate)
             
-            # Create the 'Rhythmic Pulse' by repeating the 1/2 beat seed
-            melody_pattern = seed * 8 
-            # Apply sidechain to make the melody 'dance' with the kick
+            # Apply sidechain 'pumping'
             for b in range(4):
-                melody_pattern = melody_pattern.fade(to_gain=-12, start=b*beat_ms, end=b*beat_ms+100)
-                melody_pattern = melody_pattern.fade(from_gain=-12, start=b*beat_ms+100, end=b*beat_ms+200)
+                melody_chop = melody_chop.fade(to_gain=-12, start=b*beat_ms, end=b*beat_ms+100)
+                melody_chop = melody_chop.fade(from_gain=-12, start=b*beat_ms+100, end=b*beat_ms+200)
             
-            bar_content = bar_content.overlay(melody_pattern - 4)
+            bar_content = bar_content.overlay(melody_chop - 4)
 
             # --- LAYER C: PERCUSSION SPARKLE ---
-            # Consistent high-hat repetition
-            sparkle_pattern = perc_seed * 16
-            bar_content = bar_content.overlay(sparkle_pattern - 10)
+            if bar % 2 != 0:
+                h_start = random.randint(0, len(highs) - (beat_ms // 4))
+                sparkle = create_rhythmic_chop(highs[h_start:], beat_ms // 4, 16)
+                bar_content = bar_content.overlay(sparkle - 8)
 
-            # --- LAYER D: THE CHORUS (Complete Phrases) ---
-            # Every 8 bars, drop one of our memorable vocal phrases
+            # --- LAYER D: THE CHORUS (Vocal Phrases) ---
             if (bar // 8) % 2 != 0:
-                hook = chorus_hooks[0] if (bar // 16) % 2 == 0 else chorus_hooks[1]
-                bar_content = bar_content.overlay(hook + 3)
+                vocal_phrase = get_vocal_phrase(audio, bar_ms)
+                bar_content = bar_content.overlay(vocal_phrase + 3)
 
-            # --- LAYER E: CLUB MASTERING ---
+            # --- LAYER E: FINAL SATURATION ---
+            # This is the 'Glue' that made the previous version sound good
             remix += compress_dynamic_range(bar_content) + 2
 
-        status.update(label="✅ Mastered Modular Mix Complete!", state="complete")
+        status.update(label="✅ Mastered Remix Complete!", state="complete")
         
     out_buffer = io.BytesIO()
     remix.export(out_buffer, format="mp3", bitrate="192k")
@@ -100,12 +95,12 @@ def create_modular_remix(uploaded_file, genre):
     return out_buffer
 
 # --- UI ---
-st.title("🎧 Modular Club Remixer")
-genre_choice = st.selectbox("Genre:", ["House", "Techno"])
+st.title("🎧 Pro Club Remixer")
+genre_choice = st.selectbox("Style:", ["House", "Techno", "Dubstep"])
 uploaded_file = st.file_uploader("Upload MP3", type=["mp3"])
 
 if uploaded_file:
-    if st.button("🚀 Generate Remix"):
+    if st.button("🚀 Generate Master Remix"):
         uploaded_file.seek(0)
-        final_audio = create_modular_remix(uploaded_file, genre_choice)
+        final_audio = create_club_remix(uploaded_file, genre_choice)
         st.audio(final_audio)
