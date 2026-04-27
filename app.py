@@ -34,7 +34,7 @@ def create_experimental_remix(uploaded_file, genre):
         audio = AudioSegment.from_file(io.BytesIO(file_bytes), format="mp3")
         
         # Timing Architecture
-        bpm = {"House": 126, "Techno": 142, "Dubstep": 140}[genre]
+        bpm = {"House": 120, "Techno": 160, "Dubstep": 140}[genre]
         beat_ms = int(60000 / bpm)
         bar_ms = beat_ms * 4
         
