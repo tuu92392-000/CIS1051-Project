@@ -5,137 +5,138 @@ import numpy as np
 from pydub import AudioSegment
 import io
 
-# --- ENHANCED AUDIO UTILITIES ---
+# --- UNIVERSAL FREQUENCY SCANNER ---
 
-def get_energy(segment):
-    """Returns the RMS energy of a pydub segment."""
-    return segment.rms
+def scan_and_isolate_stems(audio):
+    """
+    Scans the frequency spectrum in iterations and groups active ranges 
+    into dynamic 'instrument' lists.
+    """
+    st.write("📡 Scanning frequency spectrum for active instruments...")
+    
+    # We define our 'search zones' in Hz
+    # Using a logarithmic-style scale since music is perceived that way
+    zones = [
+        (20, 150, "Sub/Bass"),
+        (150, 400, "Low-Mid/Body"),
+        (400, 800, "Mids/Guitars"),
+        (800, 2000, "High-Mids/Vocals"),
+        (2000, 5000, "Presence/Synths"),
+        (5000, 12000, "Brilliance/Hats"),
+        (12000, 20000, "Air")
+    ]
+    
+    active_stems = []
+    
+    for low, high, label in zones:
+        # Filter the audio to this specific range
+        stem = audio.high_pass_filter(low).low_pass_filter(high)
+        
+        # Check if there is actually 'sound' here (Risk management for empty bins)
+        if stem.rms > (audio.rms * 0.1): # Only keep if it has at least 10% of total energy
+            active_stems.append({"label": label, "audio": stem, "range": (low, high)})
+            
+    return active_stems
 
-def detect_phrases(audio, min_silence_len=300, silence_thresh=-40):
-    """
-    Groups audio into phrases rather than raw chops.
-    Looks for segments bounded by relative silence.
-    """
+def detect_vocal_phrases(audio):
     from pydub.silence import split_on_silence
-    # We use a higher silence threshold to find 'vocal gaps'
+    # Isolate the vocal range specifically and try to suppress side frequencies
+    vocal_focus = audio.high_pass_filter(350).low_pass_filter(3000)
+    
+    # Advanced: Use a slight volume reduction on 'center' to help isolation
+    # (Approximating a center-channel extractor)
     chunks = split_on_silence(
-        audio, 
-        min_silence_len=min_silence_len,
-        silence_thresh=silence_thresh,
-        keep_silence=100
+        vocal_focus, 
+        min_silence_len=400,
+        silence_thresh=-35,
+        keep_silence=150
     )
-    return chunks if chunks else [audio]
+    return [c for c in chunks if len(c) > 1000]
 
-def create_remix(uploaded_file, genre="House"):
-    # 1. LOAD & ANALYZE
+def create_universal_remix(uploaded_file, genre="House"):
+    # 1. LOAD
     file_bytes = uploaded_file.read()
     audio = AudioSegment.from_file(io.BytesIO(file_bytes), format="mp3")
     
-    # Genre-Specific Settings
-    if genre == "House":
-        bpm = 126
-        total_bars = 64  # ~2 minutes
-        bass_boost = 6
-    else: # Techno
-        bpm = 140
-        total_bars = 96  # ~2:45 minutes
-        bass_boost = 12
+    # 2. DYNAMIC STEMMING
+    all_stems = scan_and_isolate_stems(audio)
+    vocal_hooks = detect_vocal_phrases(audio)
     
+    # Settings
+    bpm = 126 if genre == "House" else 142
     beat_ms = int(60000 / bpm)
     bar_ms = beat_ms * 4
-
-    # 2. DYNAMIC INSTRUMENT ISOLATION
-    # We split the frequency spectrum into 'bins' to simulate multiple tracks
-    # High-end/Risk-Controlled Approach: Dynamically create stems based on energy
-    st.write(f"🔍 Analyzing {genre} structure...")
+    total_bars = 80 # Approx 2.5 - 3 minutes
     
-    # Virtual Stemming via band-pass filters
-    stems = {
-        "sub_bass": audio.low_pass_filter(100),
-        "kick_punch": audio.high_pass_filter(100).low_pass_filter(250),
-        "mids_low": audio.high_pass_filter(250).low_pass_filter(800),
-        "mids_high": audio.high_pass_filter(800).low_pass_filter(3000),
-        "high_perc": audio.high_pass_filter(5000)
-    }
-    
-    # VOCAL PHRASE DETECTION (AI-simulated phrase grouping)
-    vocal_source = audio.high_pass_filter(300).low_pass_filter(3500)
-    phrases = detect_phrases(vocal_source)
-    # Filter for 'significant' phrases (length check)
-    vocal_hooks = [p for p in phrases if len(p) > 800 and len(p) < 5000]
+    # Categorize detected stems
+    percussion_stems = [s['audio'] for s in all_stems if s['range'][0] < 300]
+    mid_stems = [s['audio'] for s in all_stems if 300 <= s['range'][0] < 4000]
+    high_stems = [s['audio'] for s in all_stems if s['range'][0] >= 4000]
 
-    # 3. THE ARRANGEMENT ENGINE
     remix = AudioSegment.empty()
-    st.write(f"🎹 Generating {total_bars} bars of {genre}...")
+    st.write(f"🎹 Remixing {len(all_stems)} identified frequency layers into {genre}...")
 
     for bar in range(total_bars):
         bar_content = AudioSegment.silent(duration=bar_ms)
         
-        # A. FOUNDATION: THE KICK
-        kick = stems["sub_bass"][:120].compress_dynamic_range() + bass_boost
-        for b in range(4):
-            bar_content = bar_content.overlay(kick, position=b * beat_ms)
+        # A. PERCUSSION (Lowest detected frequency bin)
+        if percussion_stems:
+            kick_src = percussion_stems[0] # Grab the deepest found layer
+            kick = kick_src[:150].compress_dynamic_range() + (10 if genre == "House" else 14)
+            for b in range(4):
+                bar_content = bar_content.overlay(kick, position=b * beat_ms)
 
-        # B. GENRE-SPECIFIC PERCUSSION
-        if genre == "Techno":
-            # Driving 16th note high-hats
-            hat = stems["high_perc"][500:550] - 5
-            for b in range(16):
-                bar_content = bar_content.overlay(hat, position=b * (beat_ms // 4))
-        else:
-            # Classic House Off-beat hat
-            if bar % 2 == 0:
-                hat = stems["high_perc"][1000:1150].fade_in(20).fade_out(20)
-                for b in range(4):
-                    bar_content = bar_content.overlay(hat, position=(b * beat_ms) + (beat_ms // 2))
+        # B. RHYTHMIC INSTRUMENTS (Iterate through mid-frequency bins)
+        if bar > 4:
+            # We cycle through detected 'instruments' every 4 bars
+            stem_idx = (bar // 4) % len(mid_stems) if mid_stems else 0
+            if mid_stems:
+                current_mid = mid_stems[stem_idx]
+                m_slice = current_mid[bar*bar_ms : (bar+1)*bar_ms]
+                if len(m_slice) < bar_ms: m_slice = current_mid[:bar_ms]
+                
+                bar_content = bar_content.overlay(m_slice.fade_in(50).fade_out(50) - 4)
 
-        # C. DYNAMIC INSTRUMENTAL LAYERING
-        # Every 4-8 bars, we 'introduce' or 'remove' an instrument group
-        active_stems = []
-        if bar > 8: active_stems.append("mids_low")
-        if bar > 16: active_stems.append("mids_high")
-        
-        for stem_name in active_stems:
-            s_start = (bar * bar_ms) % len(stems[stem_name])
-            s_slice = stems[stem_name][s_start : s_start + bar_ms]
-            # Smooth the mix with crossfades
-            bar_content = bar_content.overlay(s_slice.fade_in(100).fade_out(100) - 3)
+        # C. GENRE-SPECIFIC HI-HATS (Highest detected bin)
+        if high_stems:
+            hat_src = high_stems[-1] # The highest 'Air' or 'Brilliance' bin
+            if genre == "Techno" or bar % 2 != 0:
+                hat = hat_src[500:600].fade_in(10).fade_out(10) + 2
+                pos = (beat_ms // 4) if genre == "Techno" else (beat_ms // 2)
+                for b in range(16 if genre == "Techno" else 4):
+                    bar_content = bar_content.overlay(hat, position=b * pos)
 
-        # D. VOCAL PHRASES (Complete sentences, not chops)
-        # Arrangement: Vocals drop in every 16 bars for a "Chorus" effect
-        if (bar // 8) % 4 == 2 and vocal_hooks:
+        # D. VOCALS (Phrase-based hooks)
+        if (bar // 8) % 2 != 0 and vocal_hooks:
             hook = random.choice(vocal_hooks)
-            # Center the hook in the 8-bar phrase
-            bar_content = bar_content.overlay(hook.fade_in(200).fade_out(200) + 2)
+            # Center and smooth the phrase
+            bar_content = bar_content.overlay(hook.fade_in(200).fade_out(200) + 3)
 
-        # E. SMOOTHING (Saturation & Compression)
         remix += bar_content.compress_dynamic_range()
 
-    # 4. FINAL POLISH
-    remix = remix.fade_in(bar_ms * 2).fade_out(bar_ms * 4)
+    # 5. EXPORT
+    remix = remix.fade_out(4000)
     out_buffer = io.BytesIO()
     remix.export(out_buffer, format="mp3", bitrate="192k")
     out_buffer.seek(0)
     return out_buffer
 
-# --- UI INTERFACE ---
-st.set_page_config(page_title="AI Remix Station", page_icon="🎚️")
-st.title("🎚️ AI Pro Remix Engine")
-st.caption("Advanced MIS Audio Processing: Dynamic Stemming & Phrase Detection")
+# --- UI ---
+st.set_page_config(page_title="Universal AI Remixer", page_icon="🎸")
+st.title("🎸 Universal AI Remix Engine")
+st.caption("Double Major MIS & Risk Management: Multi-Band Frequency Scanner")
 
-# Toggle for Genre
-genre_mode = st.radio("Select Remix Style:", ["House", "Techno"], horizontal=True)
-
-uploaded_file = st.file_uploader("Upload your track", type=["mp3"])
+genre_mode = st.radio("Style:", ["House", "Techno"], horizontal=True)
+uploaded_file = st.file_uploader("Upload any song (Rock, Pop, etc.)", type=["mp3"])
 
 if uploaded_file:
-    if st.button(f"🚀 Create {genre_mode} Remix"):
-        with st.spinner(f"Processing audio for {genre_mode} arrangement..."):
+    if st.button(f"Generate {genre_mode} Remix"):
+        with st.spinner("Scanning frequencies and aligning stems..."):
             try:
                 uploaded_file.seek(0)
-                final_audio = create_remix(uploaded_file, genre=genre_mode)
-                st.success("✅ Mixdown Complete!")
+                final_audio = create_universal_remix(uploaded_file, genre=genre_mode)
+                st.success("✅ Successfully Remixed!")
                 st.audio(final_audio, format="audio/mp3")
-                st.download_button("Download HQ MP3", data=final_audio, file_name=f"{genre_mode}_remix.mp3")
+                st.download_button("Download Remix", data=final_audio, file_name="ai_remix.mp3")
             except Exception as e:
-                st.error(f"Mixing Error: {e}")
+                st.error(f"Error: {e}")
