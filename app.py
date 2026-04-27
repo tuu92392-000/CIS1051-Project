@@ -13,7 +13,7 @@ def create_glitch_pattern(source_audio, beat_ms, rate=8):
     Rate 8 = 1/8th notes, Rate 16 = 1/16th notes.
     """
     slice_len = beat_ms // (rate // 4)
-    # Pick one 'Hero' micro-chop for this bar to keep it melodic/consistent
+    # Pick one micro-chop for this bar to keep it melodic/consistent
     start_point = random.randint(0, len(source_audio) - slice_len)
     micro_chop = source_audio[start_point : start_point + slice_len].fade_in(5).fade_out(5)
     
@@ -49,7 +49,7 @@ def create_experimental_remix(uploaded_file, genre):
         for bar in range(80): # Extended length
             bar_content = AudioSegment.silent(duration=bar_ms)
             
-            # 1. THE FOUNDATION: REPETITIVE LOUD KICK
+            # 1. REPETITIVE LOUD KICK
             # This is the 'Anchor'—it never changes, ensuring a clear EDM pulse
             kick = bass[:160].compress_dynamic_range() + 16 # Extreme boost
             for b in range(4):
