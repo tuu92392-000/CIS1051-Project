@@ -1,7 +1,4 @@
 streamlit
 pydub
-librosa==0.10.1
 numpy<2.0.0
 soundfile
-setuptools
-distribute
