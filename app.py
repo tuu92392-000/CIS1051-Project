@@ -16,7 +16,6 @@ def create_rhythmic_chop(segment, duration_ms, repeats):
 
 def get_vocal_phrase(vocal_track, bar_ms):
     """Finds a energetic 1-bar phrase for the 'Chorus'."""
-    # We scan for a high-energy start point
     start = random.randint(0, len(vocal_track) - bar_ms)
     return vocal_track[start : start + bar_ms].fade_in(100).fade_out(100)
 
@@ -84,7 +83,6 @@ def create_club_remix(uploaded_file, genre):
                 bar_content = bar_content.overlay(vocal_phrase + 3)
 
             # --- LAYER E: FINAL SATURATION ---
-            # This is the 'Glue' that made the previous version sound good
             remix += compress_dynamic_range(bar_content) + 2
 
         status.update(label="✅ Mastered Remix Complete!", state="complete")
