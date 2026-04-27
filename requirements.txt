@@ -1,6 +1,5 @@
 streamlit
-librosa
 pydub
-numpy
+librosa==0.10.1
+numpy<2.0.0
 soundfile
-resampy
