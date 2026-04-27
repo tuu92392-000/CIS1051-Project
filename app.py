@@ -1,151 +1,152 @@
 import streamlit as st
-import os
-import random
 import numpy as np
 from pydub import AudioSegment
+from pydub.effects import compress_dynamic_range
 import io
+import random
 
-# --- HIGH-RESOLUTION SPECTRAL ENGINE ---
+# --- PRO AUDIO UTILITIES ---
 
-def extract_center_channel(audio):
-    """
-    Isolates the 'Center' (Vocals) by subtracting the side signals.
-    This is a standard mixing technique to isolate mono vocals from stereo music.
-    """
-    if audio.channels < 2:
-        return audio.high_pass_filter(300).low_pass_filter(3000)
-    
-    # Split into Left and Right
-    channels = audio.split_to_mono()
-    left, right = channels[0], channels[1]
-    
-    # Mid = (L + R) / 2 (Isolates center)
-    # Side = (L - R) / 2 (Isolates wide instruments)
-    mid = left.overlay(right) - 3 # -3dB to maintain gain
-    
-    # Focus Mid channel on vocal frequencies
-    return mid.high_pass_filter(350).low_pass_filter(3200)
+def apply_sidechain(segment, beat_ms, intensity=-12):
+    """Creates the 'pumping' effect by ducking audio on every downbeat."""
+    ducked = segment
+    # Duck the volume for 150ms at the start of every beat where the kick hits
+    for b in range(4):
+        start = b * beat_ms
+        ducked = ducked.fade(to_gain=intensity, start=start, end=start + 100)
+        ducked = ducked.fade(from_gain=intensity, start=start + 100, end=start + 200)
+    return ducked
 
-def scan_fine_frequencies(audio):
-    """
-    Scans the song in 24 fine-grain frequency bands.
-    Filters out silent bands and classifies the rest dynamically.
-    """
-    st.write("🔬 Performing Deep Spectral Analysis (24-Band Scan)...")
-    stems = []
+def apply_wobble(segment, lfo_rate_ms=200):
+    """Creates the signature Dubstep 'wobble' by modulating volume."""
+    wobbled = AudioSegment.silent(duration=len(segment))
+    for i in range(0, len(segment), lfo_rate_ms):
+        chunk = segment[i : i + lfo_rate_ms]
+        # Alternate volume to create the 'wub'
+        vol_mod = -15 if (i // lfo_rate_ms) % 2 == 0 else 0
+        wobbled = wobbled.overlay(chunk + vol_mod, position=i)
+    return wobbled
+
+def analyze_climactic_vocals(audio, num_hooks=2):
+    """Identifies high-energy vocal segments to act as the 'Chorus'."""
+    vocal_track = audio.high_pass_filter(400).low_pass_filter(3000)
+    chunk_len = 3000 # 3-second hooks
+    energies = []
     
-    # Create 24 bands from 20Hz to 20,000Hz
-    # Using a logarithmic multiplier to follow musical intervals
-    freqs = np.logspace(np.log10(20), np.log10(20000), 25)
+    for i in range(0, len(vocal_track) - chunk_len, chunk_len):
+        energies.append((vocal_track[i:i+chunk_len].rms, i))
     
-    for i in range(len(freqs)-1):
-        low, high = int(freqs[i]), int(freqs[i+1])
-        band = audio.high_pass_filter(low).low_pass_filter(high)
+    # Sort by energy and pick the top 'hooks'
+    energies.sort(key=lambda x: x[0], reverse=True)
+    top_starts = [x[1] for x in energies[:10]] # Pick from top 10 peaks
+    
+    hooks = []
+    for _ in range(num_hooks):
+        start = random.choice(top_starts)
+        hooks.append(audio[start:start+chunk_len].fade_in(200).fade_out(200))
+    return hooks
+
+# --- MAIN REMIX ENGINE ---
+
+def create_polished_remix(uploaded_file, genre):
+    with st.status(f"🚀 Engineering {genre} Master...", expanded=True) as status:
+        file_bytes = uploaded_file.read()
+        audio = AudioSegment.from_file(io.BytesIO(file_bytes), format="mp3")
         
-        # Only keep the 'instrument' if it has significant energy
-        if band.rms > (audio.rms * 0.05):
-            stems.append({
-                "audio": band,
-                "range": (low, high),
-                "energy": band.rms
-            })
+        # 1. SETUP GENRE PARAMETERS
+        if genre == "House":
+            bpm, total_bars, halftime = 126, 64, False
+        elif genre == "Techno":
+            bpm, total_bars, halftime = 142, 80, False
+        else: # Dubstep
+            bpm, total_bars, halftime = 140, 72, True # 140 bpm but 70 bpm feel
             
-    return stems
-
-def create_pro_remix(uploaded_file, genre="House"):
-    # 1. LOAD & DECODE
-    file_bytes = uploaded_file.read()
-    audio = AudioSegment.from_file(io.BytesIO(file_bytes), format="mp3")
-    
-    # 2. SEPARATION PHASE
-    fine_stems = scan_fine_frequencies(audio)
-    # Use MS Decoding for the cleanest possible vocals
-    vocal_center = extract_center_channel(audio)
-    
-    # 3. GENRE ARCHITECTURE
-    # House: 126 BPM, bouncy, swinging rhythm
-    # Techno: 142 BPM, driving, aggressive, saturated
-    bpm = 126 if genre == "House" else 142
-    beat_ms = int(60000 / bpm)
-    bar_ms = beat_ms * 4
-    total_bars = 96 # ~3 minutes
-    
-    # Dynamic Role Assignment
-    bass_layers = [s['audio'] for s in fine_stems if s['range'][0] < 200]
-    lead_layers = [s['audio'] for s in fine_stems if 400 <= s['range'][0] < 2500]
-    perc_layers = [s['audio'] for s in fine_stems if s['range'][0] > 5000]
-
-    remix = AudioSegment.empty()
-    st.write(f"🎚️ Arranging {genre} Mixdown...")
-
-    for bar in range(total_bars):
-        bar_content = AudioSegment.silent(duration=bar_ms)
+        beat_ms = int(60000 / bpm)
+        bar_ms = beat_ms * 4
         
-        # A. DRUM SYNTHESIS (The "Real Remix" feel)
-        # We don't just loop; we build a four-on-the-floor with high velocity
-        if bass_layers:
-            # Use the 'Sub' band for the sub-kick and 'Low-Mid' for the 'thump'
-            kick_sub = bass_layers[0][:150].compress_dynamic_range() + 10
-            for b in range(4):
-                # House: Heavy compression on beats 1 and 3
-                # Techno: Constant saturation on all 4 beats
-                vol_mod = 2 if b % 2 == 0 and genre == "House" else 0
-                bar_content = bar_content.overlay(kick_sub + vol_mod, position=b * beat_ms)
+        # 2. SPECTRAL ISOLATION
+        status.update(label="🔬 Isolating Instrumental Layers...")
+        bass = audio.low_pass_filter(150).set_channels(1)
+        mids = audio.high_pass_filter(300).low_pass_filter(3500)
+        highs = audio.high_pass_filter(5000)
+        
+        # 3. CHORUS EXTRACTION
+        status.update(label="🎤 Extracting High-Energy Hooks...")
+        vocal_hooks = analyze_climactic_vocals(audio)
 
-        # B. DYNAMIC VELOCITY INSTRUMENTS
-        if bar > 8 and lead_layers:
-            # Pick 2 random leads and alternate them for a 'call and response' effect
-            lead = random.choice(lead_layers)
+        remix = AudioSegment.empty()
+        
+        status.update(label=f"🎚️ Mixing {genre} Arrangement...")
+        progress = st.progress(0)
+
+        for bar in range(total_bars):
+            progress.progress((bar + 1) / total_bars)
+            bar_content = AudioSegment.silent(duration=bar_ms)
             
-            if genre == "House":
-                # Create a "Swinging" chop pattern (1/8th notes with syncopation)
-                slice_len = beat_ms // 2
-                for b in range(8):
-                    if random.random() > 0.3: # Randomly skip notes for "groove"
-                        m_slice = lead[b*slice_len : (b+1)*slice_len].fade_in(20).fade_out(20)
-                        bar_content = bar_content.overlay(m_slice - 5, position=b * slice_len)
+            # --- LAYER 1: THE BEAT ---
+            kick = bass[:150].compress_dynamic_range() + 12
+            if halftime: # Dubstep: Kick on 1, Snare-like high on 3
+                bar_content = bar_content.overlay(kick, position=0)
+                snare = highs[500:700] + 10
+                bar_content = bar_content.overlay(snare, position=beat_ms * 2)
+            else: # House/Techno: Four-on-the-floor
+                for b in range(4):
+                    bar_content = bar_content.overlay(kick, position=b * beat_ms)
+
+            # --- LAYER 2: THE INSTRUMENTAL ---
+            # Extract current bar logic
+            m_start = (bar * bar_ms) % len(mids)
+            instr_slice = mids[m_start : m_start + bar_ms]
+            
+            if genre == "Dubstep":
+                instr_slice = apply_wobble(instr_slice)
             else:
-                # Techno: "Driving" 1/16th notes with heavy distortion
-                slice_len = beat_ms // 4
-                for b in range(16):
-                    m_slice = lead[b*slice_len : (b+1)*slice_len].fade_in(5).fade_out(5)
-                    bar_content = bar_content.overlay(m_slice + 2, position=b * slice_len)
+                instr_slice = apply_sidechain(instr_slice, beat_ms)
+            
+            bar_content = bar_content.overlay(instr_slice - 3)
 
-        # C. VOCAL HOOKS (Mid-Side Isolated)
-        # Only drop vocals in specific sections (Structure: 16 bars on, 16 off)
-        if (bar // 16) % 2 != 0:
-            v_start = random.randint(0, len(vocal_center) - bar_ms)
-            vocal_phrase = vocal_center[v_start : v_start + bar_ms]
-            bar_content = bar_content.overlay(vocal_phrase.fade_in(100).fade_out(100) + 4)
+            # --- LAYER 3: THE PERCUSSION ---
+            hat = highs[1000:1150] + (5 if genre != "Techno" else 8)
+            if genre == "House":
+                for b in range(4): # Off-beat hats
+                    bar_content = bar_content.overlay(hat, position=(b * beat_ms) + (beat_ms // 2))
+            elif genre == "Techno":
+                for b in range(16): # 16th note drive
+                    bar_content = bar_content.overlay(hat - 6, position=b * (beat_ms // 4))
 
-        # D. MASTERING BUS (The "Glue")
-        # Apply a 'pumping' effect by compressing the whole bar
-        bar_content = bar_content.compress_dynamic_range()
-        remix += bar_content
+            # --- LAYER 4: THE CHORUS (Vocal Logic) ---
+            # Alternate between two climactic hooks every 8-16 bars
+            if (bar // 8) % 2 != 0:
+                hook_idx = 0 if (bar // 16) % 2 == 0 else 1
+                if vocal_hooks:
+                    active_hook = vocal_hooks[hook_idx]
+                    # Loop the hook if it's shorter than the bar
+                    bar_content = bar_content.overlay(active_hook + 3)
 
-    # 5. EXPORT
-    remix = remix.fade_out(5000)
+            # MASTERING: Prevent Clipping
+            remix += compress_dynamic_range(bar_content)
+
+        status.update(label="✨ Mastering Final Mix...", state="complete")
+        
     out_buffer = io.BytesIO()
-    remix.export(out_buffer, format="mp3", bitrate="256k")
+    remix.export(out_buffer, format="mp3", bitrate="192k")
     out_buffer.seek(0)
     return out_buffer
 
-# --- UI ---
-st.set_page_config(page_title="High-Fi Remix Engine", page_icon="🔊")
-st.title("🔊 High-Fi AI Remix Engine")
-st.caption("24-Band Spectral Binning & Mid-Side Vocal Isolation")
+# --- STREAMLIT UI ---
+st.set_page_config(page_title="AI Pro Remix Engine", page_icon="🎧")
+st.title("🎧 AI Pro Remix Engine")
+st.caption("Advanced Spectral Slicing | Chorus Extraction | Sidechain Compression")
 
-style = st.sidebar.radio("Choose Remix Philosophy:", ["House", "Techno"])
+genre_choice = st.selectbox("Select Genre Style:", ["House", "Techno", "Dubstep"])
 uploaded_file = st.file_uploader("Upload Audio (MP3)", type=["mp3"])
 
 if uploaded_file:
-    if st.button(f"⚡ Generate {style} Remix"):
-        with st.spinner("Analyzing spectral data and isolating center-channel vocals..."):
-            try:
-                uploaded_file.seek(0)
-                final_audio = create_pro_remix(uploaded_file, genre=style)
-                st.success("✨ Production Mastered!")
-                st.audio(final_audio, format="audio/mp3")
-                st.download_button("Download Pro Remix", data=final_audio, file_name=f"pro_{style}_remix.mp3")
-            except Exception as e:
-                st.error(f"Critical Production Error: {e}")
+    if st.button(f"⚡ Generate {genre_choice} Remix"):
+        try:
+            uploaded_file.seek(0)
+            final_audio = create_polished_remix(uploaded_file, genre_choice)
+            st.audio(final_audio, format="audio/mp3")
+            st.download_button("Download Remix", data=final_audio, file_name=f"{genre_choice.lower()}_remix.mp3")
+        except Exception as e:
+            st.error(f"Error: {e}")
