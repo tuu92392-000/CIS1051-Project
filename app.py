@@ -5,97 +5,110 @@ from pydub.effects import compress_dynamic_range
 import io
 import random
 
-# --- GLITCH ENGINE UTILITIES ---
+# --- MUSICAL LOGIC UTILITIES ---
 
-def create_glitch_pattern(source_audio, beat_ms, rate=8):
+def get_melody_notes(segment, beat_ms):
     """
-    Takes a source (vocals or mids) and turns it into a rhythmic instrument.
-    Rate 8 = 1/8th notes, Rate 16 = 1/16th notes.
+    Slices a segment into 4 distinct 'notes' (chops) 
+    to be used as a melodic palette.
     """
-    slice_len = beat_ms // (rate // 4)
-    # Pick one 'Hero' micro-chop for this bar to keep it melodic/consistent
-    start_point = random.randint(0, len(source_audio) - slice_len)
-    micro_chop = source_audio[start_point : start_point + slice_len].fade_in(5).fade_out(5)
-    
-    # Create a rhythmic pattern (e.g., skip every 3rd note for 'groove')
-    pattern = AudioSegment.empty()
-    for i in range(rate):
-        if random.random() > 0.2: # 80% density for that 'experimental' feel
-            pattern += micro_chop
-        else:
-            pattern += AudioSegment.silent(duration=slice_len)
-    return pattern
+    palette = []
+    for _ in range(4):
+        start = random.randint(0, len(segment) - beat_ms)
+        palette.append(segment[start : start + beat_ms].fade_in(10).fade_out(10))
+    return palette
+
+def apply_sidechain(segment, beat_ms):
+    """Ducks the volume on every beat to let the kick drum through."""
+    ducked = segment
+    for b in range(4):
+        start = b * beat_ms
+        ducked = ducked.fade(to_gain=-18, start=start, end=start + 120)
+        ducked = ducked.fade(from_gain=-18, start=start + 120, end=start + 240)
+    return ducked
 
 # --- THE FINAL ENGINE ---
 
-def create_experimental_remix(uploaded_file, genre):
-    with st.status(f"🧪 Synthesizing {genre} Glitch Master...", expanded=True) as status:
+def create_layered_masterpiece(uploaded_file, genre):
+    with st.status(f"🎹 Orchestrating {genre} Layers...", expanded=True) as status:
         file_bytes = uploaded_file.read()
         audio = AudioSegment.from_file(io.BytesIO(file_bytes), format="mp3")
         
-        # Timing Architecture
-        bpm = {"House": 126, "Techno": 142, "Dubstep": 140}[genre]
+        # 1. TIMING & STEMS
+        bpm = {"House": 124, "Techno": 138, "Dubstep": 140}[genre]
         beat_ms = int(60000 / bpm)
         bar_ms = beat_ms * 4
         
-        # Stem Extraction (Frequency Focused)
-        bass = audio.low_pass_filter(160)
-        mids = audio.high_pass_filter(300).low_pass_filter(3500)
-        vocals = audio.high_pass_filter(600).low_pass_filter(4000)
-        highs = audio.high_pass_filter(6000)
+        bass = audio.low_pass_filter(150)
+        mids = audio.high_pass_filter(350).low_pass_filter(3000)
+        highs = audio.high_pass_filter(5000)
+        
+        # 2. SEED THE MELODY (Music Theory Alignment)
+        # We pick 4 distinct 'notes' from the mids to act as our instrument
+        status.update(label="🎸 Extracting Melodic Palette...")
+        note_palette = get_melody_notes(mids, beat_ms // 2)
+        # Minor Progression Pattern (index of notes in palette)
+        # Standard: i - VI - III - VII 
+        melody_pattern = [0, 2, 1, 3, 0, 2, 3, 1] 
+
+        # 3. SEED THE VOCALS
+        status.update(label="🎤 Scanning for Chorus Hooks...")
+        vocal_hook = audio[random.randint(0, len(audio)-bar_ms*2) :].high_pass_filter(500)[:bar_ms*2]
 
         remix = AudioSegment.empty()
         
-        for bar in range(80): # Extended length
+        for bar in range(96): # Standard 3-minute club track
             bar_content = AudioSegment.silent(duration=bar_ms)
             
-            # 1. THE FOUNDATION: REPETITIVE LOUD KICK
-            # This is the 'Anchor'—it never changes, ensuring a clear EDM pulse
-            kick = bass[:160].compress_dynamic_range() + 16 # Extreme boost
+            # --- TRACK 1: THE KICK (Always Consistent) ---
+            # Saturated low-end pulse
+            kick = bass[:160].compress_dynamic_range() + 16
             for b in range(4):
                 bar_content = bar_content.overlay(kick, position=b * beat_ms)
 
-            # 2. CHOPPY INSTRUMENTAL MELODY
-            # We treat the mids like a rhythmic synth
-            instr_glitch = create_glitch_pattern(mids, beat_ms, rate=8)
-            # Sidechain the melody so it pumps with the kick
-            for b in range(4):
-                instr_glitch = instr_glitch.fade(to_gain=-15, start=b*beat_ms, end=b*beat_ms+120)
+            # --- TRACK 2: THE LAYERED MELODY ---
+            # We follow the melody_pattern across 2 bars
+            bar_melody = AudioSegment.empty()
+            pattern_start = (bar % 2) * 4
+            for i in range(4):
+                note_idx = melody_pattern[pattern_start + i]
+                # Repeat the note twice for a 1/8th note house feel
+                bar_melody += note_palette[note_idx] + note_palette[note_idx]
             
-            bar_content = bar_content.overlay(instr_glitch - 2)
+            # Apply sidechain so the melody 'pumps'
+            bar_content = bar_content.overlay(apply_sidechain(bar_melody, beat_ms) - 4)
 
-            # 3. VOCAL AS AN INSTRUMENT (The 'Glitch' Layer)
-            # Vocals are chopped even finer (1/16th notes) for texture
-            vocal_glitch = create_glitch_pattern(vocals, beat_ms, rate=16)
-            bar_content = bar_content.overlay(vocal_glitch - 6)
-
-            # 4. RANDOM PERCUSSIVE ACCENTS
+            # --- TRACK 3: THE RHYTHMIC GLITCH ---
+            # High-pass percussion chops on the off-beats
             if bar % 2 == 0:
-                snare_high = highs[200:350] + 8
-                bar_content = bar_content.overlay(snare_high, position=beat_ms * 2)
+                h_chop = highs[100:200] * 8
+                bar_content = bar_content.overlay(h_chop.fade_in(500) - 10)
 
-            # 5. MASTERING: SATURATION & GLUE
-            # This squashes the glitches and kick into a single 'Wall of Sound'
-            remix += compress_dynamic_range(bar_content) + 3
+            # --- TRACK 4: THE VOCAL CHORUS ---
+            # Drop the vocals only in the 2nd and 4th 'blocks' of 8 bars
+            if (bar // 8) % 4 in [1, 3]:
+                # Chop the vocal hook into the current bar
+                v_slice = vocal_hook[(bar % 2) * bar_ms : ((bar % 2) + 1) * bar_ms]
+                bar_content = bar_content.overlay(v_slice - 2)
 
-        status.update(label="✨ Glitch Master Complete!", state="complete")
+            # --- FINAL MASTERING: THE GLUE ---
+            # Squash everything together to make it sound like one song
+            remix += compress_dynamic_range(bar_content) + 2
+
+        status.update(label="✨ Club Master Finalized!", state="complete")
         
     out_buffer = io.BytesIO()
     remix.export(out_buffer, format="mp3", bitrate="192k")
     out_buffer.seek(0)
     return out_buffer
 
-# --- UI ---
-st.set_page_config(page_title="AI Glitch Remixer", page_icon="🧪")
-st.title("🧪 AI Glitch Remix Engine")
-st.caption("Double Major MIS & Corporate Risk: Granular Synthesis Logic")
-
-style = st.selectbox("Style:", ["House", "Techno", "Dubstep"])
+# --- STREAMLIT UI ---
+st.title("🎧 Multi-Track AI Remixer")
+genre = st.selectbox("Style:", ["House", "Techno", "Dubstep"])
 file = st.file_uploader("Upload Track", type=["mp3"])
 
 if file:
     if st.button("🚀 Generate Final Master"):
         file.seek(0)
-        out = create_experimental_remix(file, style)
+        out = create_layered_masterpiece(file, genre)
         st.audio(out)
-        st.download_button("Download Remix", out, f"{style.lower()}_glitch_remix.mp3")
